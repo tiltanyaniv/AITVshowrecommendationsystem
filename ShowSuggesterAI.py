@@ -18,14 +18,22 @@ if __name__ == "__main__":
     while True:
         # Ask the user for input
         user_input = input(
-            "Which TV shows did you really like watching? Separate them by a comma. Make sure to enter more than 1 show:\n"
+            "Which TV shows did you really like watching? Separate them by a comma. Make sure to enter more than 1 show\n"
         )
 
         # Extract shows from user input
         extracted_shows = extract_user_shows(user_input)
 
         if len(extracted_shows) > 1:
-            print(f"Extracted shows: {extracted_shows}")
-            break
+            # Confirm with the user
+            confirmation = input(
+                f"Making sure, do you mean {', '.join(extracted_shows)}? (y/n): "
+            ).strip().lower()
+
+            if confirmation == 'y':
+                print(f"Great! Generating recommendations now...")
+                break
+            else:
+                print("Sorry about that. Let's try again. Please make sure to write the names of the TV shows correctly.")
         else:
             print("Please enter at least two valid TV shows.")
