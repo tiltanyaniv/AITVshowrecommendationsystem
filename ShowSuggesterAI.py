@@ -14,6 +14,12 @@ def extract_user_shows(user_input):
     user_shows = [show.strip() for show in user_input.split(",") if show.strip()]
     return user_shows
 
+def load_tv_shows_pandas(csv_file):
+    """
+    Placeholder implementation: Make the test fail initially.
+    """
+    return {}
+
 if __name__ == "__main__":
     while True:
         # Ask the user for input
