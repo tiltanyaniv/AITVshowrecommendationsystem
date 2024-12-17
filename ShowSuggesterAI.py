@@ -3,6 +3,8 @@ import pandas as pd
 import os
 import pickle
 from openai import OpenAI
+import csv
+from thefuzz import process
 
 def extract_user_shows(user_input):
     """
@@ -33,6 +35,24 @@ def load_tv_shows_pandas(csv_file):
 
     # Convert the DataFrame into a dictionary (title: description)
     return pd.Series(df["Description"].values, index=df["Title"].values).to_dict()
+
+def match_user_shows(user_shows, tv_show_list):
+    """
+    Matches user-entered shows to the closest titles in the TV show list.
+
+    Parameters:
+        user_shows (list): List of user-input show names.
+        tv_show_list (list): List of actual TV show titles.
+
+    Returns:
+        list: A list of matched show titles.
+    """
+    matched_shows = []
+    for show in user_shows:
+        # Find the closest matching title in the list
+        match, score = process.extractOne(show, tv_show_list)
+        matched_shows.append(match)
+    return matched_shows
 
 
 def generate_embeddings(tv_show_data, embeddings_file):
@@ -81,6 +101,9 @@ if __name__ == "__main__":
     # Step 2: Generate or load embeddings
     tv_show_embeddings = generate_embeddings(tv_show_data, embeddings_file_path)
 
+    # List of TV show titles
+    tv_show_list = list(tv_show_data.keys())
+
     while True:
         # Ask the user for input
         user_input = input(
@@ -91,6 +114,8 @@ if __name__ == "__main__":
         extracted_shows = extract_user_shows(user_input)
 
         if len(extracted_shows) > 1:
+            # Match user-input shows to real titles
+            matched_shows = match_user_shows(extracted_shows, tv_show_list)
             # Confirm with the user
             confirmation = input(
                 f"Making sure, do you mean {', '.join(extracted_shows)}? (y/n): "
