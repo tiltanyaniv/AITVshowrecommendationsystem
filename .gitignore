@@ -1,3 +1,4 @@
 imdb_tvshows.csv
 .pytest_cache/
 .venv/
+tv_show_embeddings.pkl

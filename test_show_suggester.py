@@ -37,11 +37,14 @@ def test_load_tv_shows(tmpdir):
 # Test 3: Generate and save embeddings
 @patch("openai.OpenAI")
 def test_generate_embeddings(mock_openai, tmpdir):
-    # Mock OpenAI embedding response
+    # Mock the OpenAI client and embedding response
     mock_client = MagicMock()
-    mock_client.embeddings.create.return_value = {
-        "data": [{"embedding": [0.1, 0.2, 0.3]}]
-    }
+    mock_embedding = [0.0] * 1536  # Mock embedding of size 1536
+    mock_response = MagicMock()
+    mock_response.data = [{"embedding": mock_embedding}]  # Simulate real API response structure
+    
+    # Set the mock response for embeddings.create
+    mock_client.embeddings.create.return_value = mock_response
     mock_openai.return_value = mock_client
     
     # Prepare test data
@@ -53,7 +56,8 @@ def test_generate_embeddings(mock_openai, tmpdir):
     
     # Assert the embeddings are correct
     assert "Game Of Thrones" in embeddings
-    assert embeddings["Game Of Thrones"] == [0.1, 0.2, 0.3]
+    assert len(embeddings["Game Of Thrones"]) == 1536  # Check embedding size
+    assert embeddings["Game Of Thrones"] == mock_embedding  # Check exact mock content
     
     # Check that embeddings were saved to the file
     with open(str(embeddings_file), "rb") as f:
@@ -69,7 +73,6 @@ def test_load_existing_embeddings(tmpdir):
         pickle.dump(mock_embeddings, f)
     
     # Load embeddings
-    from ShowSuggesterAI import generate_embeddings
     embeddings = generate_embeddings({}, str(embeddings_file))
     
     # Assert the embeddings match
