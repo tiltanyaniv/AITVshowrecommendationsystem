@@ -33,6 +33,13 @@ def load_tv_shows_pandas(csv_file):
     return pd.Series(df["Description"].values, index=df["Title"].values).to_dict()
 
 
+def generate_embeddings(tv_show_data, embeddings_file):
+    """
+    Placeholder implementation for TDD. This function does nothing meaningful yet.
+    """
+    return {}
+
+
 if __name__ == "__main__":
     # File paths
     script_dir = os.path.dirname(os.path.abspath(__file__))  # Directory of the current script
