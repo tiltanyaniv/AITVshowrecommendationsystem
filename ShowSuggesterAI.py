@@ -1,4 +1,6 @@
 from thefuzz import process
+import pandas as pd
+import os
 
 def extract_user_shows(user_input):
     """
@@ -16,11 +18,32 @@ def extract_user_shows(user_input):
 
 def load_tv_shows_pandas(csv_file):
     """
-    Placeholder implementation: Make the test fail initially.
+    Loads TV shows and their descriptions from a CSV file using Pandas.
+
+    Parameters:
+        csv_file (str): Path to the CSV file.
+
+    Returns:
+        dict: A dictionary where keys are show titles and values are descriptions.
     """
-    return {}
+    # Read the CSV file into a DataFrame
+    df = pd.read_csv(csv_file)
+
+    # Convert the DataFrame into a dictionary (title: description)
+    return pd.Series(df["Description"].values, index=df["Title"].values).to_dict()
+
 
 if __name__ == "__main__":
+    # File paths
+    script_dir = os.path.dirname(os.path.abspath(__file__))  # Directory of the current script
+    csv_file_path = os.path.join(script_dir, "imdb_tvshows")
+    # Step 1: Load TV shows using Pandas
+    try:
+        tv_show_data = load_tv_shows_pandas(csv_file_path)
+        print(f"Loaded {len(tv_show_data)} TV shows successfully!\n")
+    except FileNotFoundError:
+        print(f"Error: The file '{csv_file_path}' was not found. Make sure it exists in the same directory as this script.")
+        exit(1)
     while True:
         # Ask the user for input
         user_input = input(
