@@ -5,6 +5,7 @@ import pickle
 from openai import OpenAI
 import csv
 from thefuzz import process
+import numpy as np
 
 def extract_user_shows(user_input):
     """
@@ -83,6 +84,71 @@ def generate_embeddings(tv_show_data, embeddings_file):
     print("Embeddings saved successfully!")
     return embeddings
 
+def calculate_average_vector(show_vectors):
+    """
+    Calculates the average vector from a list of vectors.
+
+    Parameters:
+        show_vectors (list): List of embedding vectors.
+
+    Returns:
+        np.array: The average vector.
+    """
+    if not show_vectors:
+        raise ValueError("No vectors provided for averaging.")
+    return np.mean(show_vectors, axis=0)
+
+import numpy as np
+
+def cosine_similarity(a, b):
+    """
+    Returns the cosine similarity between two vectors `a` and `b`.
+    """
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+def recommend_shows(input_shows, average_vector, tv_show_embeddings, top_n=5):
+    """
+    Recommends TV shows based on similarity to the average vector.
+
+    Parameters:
+        input_shows (list): List of shows input by the user.
+        average_vector (np.array): The average vector of the user's input shows.
+        tv_show_embeddings (dict): Dictionary of TV show embeddings.
+        top_n (int): Number of top recommendations to return.
+
+    Returns:
+        list: A list of tuples (show_title, similarity, percentage).
+    """
+    similarities = []
+
+    for show, vector in tv_show_embeddings.items():
+        # Exclude the input shows
+        if show in input_shows:
+            continue
+
+        # Calculate cosine similarity
+        similarity = cosine_similarity(average_vector, np.array(vector))
+        similarities.append((show, similarity))
+
+    # Sort by similarity in descending order
+    similarities.sort(key=lambda x: x[1], reverse=True)
+
+    # Select top N recommendations
+    top_recommendations = similarities[:top_n]
+
+    # Normalize similarity scores to percentages
+    max_similarity = top_recommendations[0][1]
+    min_similarity = top_recommendations[-1][1]
+
+    recommendations_with_percentages = []
+    for show, similarity in top_recommendations:
+        # Scale similarity to a percentage (normalized)
+        percentage = 100 * (similarity - min_similarity) / (max_similarity - min_similarity)
+        recommendations_with_percentages.append((show, similarity, round(percentage, 2)))
+
+    return recommendations_with_percentages
+
 
 if __name__ == "__main__":
     # File paths
@@ -90,7 +156,7 @@ if __name__ == "__main__":
     csv_file_path = os.path.join(script_dir, "imdb_tvshows.csv")
     embeddings_file_path = os.path.join(script_dir, "tv_show_embeddings.pkl")
 
-    # Step 1: Load TV shows using Pandas
+    # Step 1: Load TV shows and embeddings
     try:
         tv_show_data = load_tv_shows_pandas(csv_file_path)
         print(f"Loaded {len(tv_show_data)} TV shows successfully!\n")
@@ -98,12 +164,18 @@ if __name__ == "__main__":
         print(f"Error: The file '{csv_file_path}' was not found. Make sure it exists in the same directory as this script.")
         exit(1)
 
-    # Step 2: Generate or load embeddings
-    tv_show_embeddings = generate_embeddings(tv_show_data, embeddings_file_path)
+    try:
+        tv_show_embeddings = generate_embeddings(tv_show_data, embeddings_file_path)
+        print(f"Loaded embeddings for {len(tv_show_embeddings)} TV shows successfully!\n")
+    except FileNotFoundError:
+        print(f"Error: The embeddings file '{embeddings_file_path}' was not found. Please generate embeddings first.")
+        exit(1)
+
 
     # List of TV show titles
     tv_show_list = list(tv_show_data.keys())
 
+    # Step 2: Ask the user for input
     while True:
         # Ask the user for input
         user_input = input(
@@ -128,3 +200,23 @@ if __name__ == "__main__":
                 print("Sorry about that. Let's try again. Please make sure to write the names of the TV shows correctly.")
         else:
             print("Please enter at least two valid TV shows.")
+    
+    # Step 4: Fetch vectors for matched shows
+    input_vectors = [
+        np.array(tv_show_embeddings[show]) for show in matched_shows if show in tv_show_embeddings
+    ]
+
+    if not input_vectors:
+        print("Error: No valid embeddings found for the matched shows.")
+        exit(1)
+
+    # Step 5: Calculate the average vector
+    average_vector = calculate_average_vector(input_vectors)
+
+    # Step 6: Get recommendations
+    recommendations = recommend_shows(matched_shows, average_vector, tv_show_embeddings)
+
+    # Step 7: Output recommendations
+    print("\nHere are the TV shows that I think you would love:")
+    for show, similarity, percentage in recommendations:
+        print(f"{show} ({percentage}%)")
