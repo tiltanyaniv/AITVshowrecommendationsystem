@@ -6,6 +6,14 @@ from openai import OpenAI
 import csv
 from thefuzz import process
 import numpy as np
+from PIL import Image
+import requests
+from io import BytesIO
+import time
+import json
+
+# Initialize OpenAI Client
+client = OpenAI()
 
 def extract_user_shows(user_input):
     """
@@ -73,7 +81,6 @@ def generate_embeddings(tv_show_data, embeddings_file):
             return pickle.load(f)
 
     print("Generating embeddings...")
-    client = OpenAI()
     embeddings = {}
     for title, description in tv_show_data.items():
         response = client.embeddings.create(input=description, model="text-embedding-ada-002")
@@ -150,6 +157,162 @@ def recommend_shows(input_shows, average_vector, tv_show_embeddings, top_n=5):
     return recommendations_with_percentages
 
 
+def generate_show_name_and_description(prompt):
+    """
+    Generate a TV show name and description using OpenAI's GPT model.
+
+    Parameters:
+        prompt (str): A descriptive prompt for the show.
+
+    Returns:
+        tuple: Show name and description.
+    """
+    # Send the request to OpenAI
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=300,
+        temperature=0.7
+    )
+    generated_text = response.choices[0].message.content.strip()
+
+    # Initialize defaults
+    show_name = "Unnamed Show"
+    description = "No description provided."
+
+    try:
+        # Split the response into lines for processing
+        lines = generated_text.split("\n")
+
+        # Iterate through lines to extract show name and description
+        for line in lines:
+            if line.lower().startswith("show name:"):
+                # Extract the text after "Show Name:"
+                show_name = line.split(":", 1)[1].strip()
+            elif line.lower().startswith("description:"):
+                # Extract the text after "Description:"
+                description = line.split(":", 1)[1].strip()
+
+        # Fallback: If no explicit "Show Name" or "Description" found, use entire text
+        if not show_name or show_name == "Unnamed Show":
+            show_name = generated_text.split("\n")[0].strip()
+        if not description or description == "No description provided.":
+            description = "\n".join(generated_text.split("\n")[1:]).strip()
+
+    except Exception as e:
+        print(f"Error parsing generated text: {e}. Returning defaults.")
+    
+    return show_name, description
+
+
+
+def generate_show_image(prompt, output_path):
+    LIGHTX_API_URL = 'https://api.lightxeditor.com/external/api/v1/text2image'
+    LIGHTX_STATUS_URL = 'https://api.lightxeditor.com/external/api/v1/order-status'
+    lightx_api_key = os.getenv("LIGHTX_API_KEY")
+
+    if not lightx_api_key:
+        print("Error: LIGHTX_API_KEY environment variable not set.")
+        return None
+
+    headers = {
+        'Content-Type': 'application/json',
+        'x-api-key': lightx_api_key
+    }
+
+    # Step 1: Submit the image generation request
+    data = {
+        "textPrompt": prompt
+    }
+
+    try:
+        print(f"Sending request to LightX API with prompt: {prompt}")
+        response = requests.post(LIGHTX_API_URL, headers=headers, json=data)
+
+        if response.status_code == 200:
+            try:
+                response_data = response.json()
+                print("Debug: Response JSON:", response_data)  # Debugging line to inspect the JSON
+                if response_data and 'body' in response_data and 'orderId' in response_data['body']:
+                    order_id = response_data.get('body', {}).get('orderId')
+                    print(f"Order ID: {order_id}")
+                else:
+                    print("Error: 'body' or 'orderId' not found in the response.")
+                    print(f"Response Content: {response_data}")
+                    return None
+            except ValueError as e:
+                print(f"Error parsing JSON response: {e}")
+                print(f"Response Content: {response.text}")
+                return None
+
+            # Step 2: Poll for the image URL
+            status_payload = {"orderId": order_id}
+            retries = 0
+            max_retries = 5
+            image_url = None
+
+            while retries < max_retries:
+                time.sleep(5)  # Wait for 5 seconds between polls
+                status_response = requests.post(LIGHTX_STATUS_URL, headers=headers, json=status_payload)
+
+                if status_response.status_code == 200:
+                    try:
+                        status_data = status_response.json().get('body', {})
+                        status = status_data.get('status')
+
+                        if status == "active":
+                            image_url = status_data.get('output')  # The image URL
+                            print(f"Image URL: {image_url}")
+                            break
+                        elif status == "failed":
+                            print("Image generation failed.")
+                            return None
+                    except ValueError as e:
+                        print(f"Error parsing JSON response during status check: {e}")
+                        print(f"Response Content: {status_response.text}")
+                        break
+                else:
+                    print(f"Failed to fetch status. Status code: {status_response.status_code}")
+                    print(status_response.text)
+
+                retries += 1
+
+            if image_url:
+                # Step 3: Download the image
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)  # Ensure directory exists
+                image_response = requests.get(image_url)
+                if image_response.status_code == 200:
+                    with open(output_path, "wb") as file:
+                        file.write(image_response.content)
+                    print(f"Image saved to: {output_path}")
+                    return output_path
+                else:
+                    print(f"Failed to download the image. Status code: {image_response.status_code}")
+            else:
+                print("Image generation timed out.")
+        else:
+            print(f"Initial request failed. Status code: {response.status_code}")
+            print(response.text)
+
+    except requests.exceptions.RequestException as err:
+        print(f"Request error: {err}")
+
+    return None
+
+def display_images(image_paths):
+    """
+    Display the generated images inside the Python program.
+
+    Parameters:
+        image_paths (list): List of image file paths to display.
+    """
+    for image_path in image_paths:
+        try:
+            img = Image.open(image_path)
+            img.show()  # Opens the image using the default viewer
+        except Exception as e:
+            print(f"Error displaying image {image_path}: {e}")
+
 if __name__ == "__main__":
     # File paths
     script_dir = os.path.dirname(os.path.abspath(__file__))  # Directory of the current script
@@ -220,3 +383,52 @@ if __name__ == "__main__":
     print("\nHere are the TV shows that I think you would love:")
     for show, similarity, percentage in recommendations:
         print(f"{show} ({percentage}%)")
+
+    # Step 7: Generate custom shows sequentially
+    # First custom show based on user input
+    input_prompt = (
+        "Create a unique TV show name and short description.\n"
+        "Please respond in the following format:\n"
+        "Show Name: [Your TV Show Name]\n"
+        "Description: [A brief description of the show]\n\n"
+        "Example:\n"
+        "Show Name: Chrono Shadows\n"
+        "Description: In a world where time is a malleable force, a rogue timekeeper and a young girl must race against time to save reality.\n\n"
+        "The following shows are provided as inspiration: "
+        f"{', '.join(matched_shows)}"
+    )
+    show1_name, show1_description = generate_show_name_and_description(input_prompt)
+    print(f"\nShow #1: {show1_name}")
+    print(f"Description: {show1_description}")
+
+    show1_visual_prompt = f"An image depicting the TV show '{show1_name}' and its story: {show1_description}"
+    show1_image_path = f"generated_ads/{show1_name.replace(' ', '_').replace('*', '')}.png"
+    generate_show_image(show1_visual_prompt, show1_image_path)
+
+    # Second custom show based on recommendations
+    recommended_prompt = (
+        "Create a unique TV show name and short description.\n"
+        "Please respond in the following format:\n"
+        "Show Name: [Your TV Show Name]\n"
+        "Description: [A brief description of the show]\n\n"
+        "Example:\n"
+        "Show Name: Arcane Legends\n"
+        "Description: In a world where ancient magic and modern technology collide, a group of misfits uncovers a secret that could change their world forever.\n\n"
+        "The following recommended shows are provided as inspiration: "
+        f"{', '.join([rec[0] for rec in recommendations])}"
+    )
+    
+    show2_name, show2_description = generate_show_name_and_description(recommended_prompt)
+    print(f"\nShow #2: {show2_name}")
+    print(f"Description: {show2_description}")
+
+    show2_visual_prompt = f"An image depicting the TV show '{show2_name}' and its story: {show2_description}"
+    show2_image_path = f"generated_ads/{show2_name.replace(' ', '_').replace('*', '')}.png"
+    generate_show_image(show2_visual_prompt, show2_image_path)
+
+    # Step 8: Display generated images
+    print("\nHere are your two custom TV shows with their posters:")
+    print(f"Show #1: {show1_name} | Poster saved at: {show1_image_path}")
+    print(f"Show #2: {show2_name} | Poster saved at: {show2_image_path}")
+    display_images([show1_image_path, show2_image_path])
+
