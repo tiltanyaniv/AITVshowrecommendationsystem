@@ -11,6 +11,7 @@ import requests
 from io import BytesIO
 import time
 import json
+from annoy import AnnoyIndex
 
 # Initialize OpenAI Client
 client = OpenAI()
@@ -113,47 +114,109 @@ def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
-def recommend_shows(input_shows, average_vector, tv_show_embeddings, top_n=5):
+def build_annoy_index(tv_show_embeddings, index_file, num_trees=10):
     """
-    Recommends TV shows based on similarity to the average vector.
+    Build an Annoy index for fast similarity searches.
 
     Parameters:
-        input_shows (list): List of shows input by the user.
-        average_vector (np.array): The average vector of the user's input shows.
-        tv_show_embeddings (dict): Dictionary of TV show embeddings.
+        tv_show_embeddings (dict): Dictionary of show titles and their embeddings.
+        index_file (str): Path to save the Annoy index.
+        num_trees (int): Number of trees to use for the Annoy index (higher = more accurate).
+
+    Returns:
+        AnnoyIndex: The built Annoy index.
+    """
+    if not tv_show_embeddings:
+        raise ValueError("No embeddings provided to build the index.")
+
+    # Use the dimensionality of the first vector for the Annoy index
+    dim = len(next(iter(tv_show_embeddings.values())))
+    annoy_index = AnnoyIndex(dim, 'angular')
+
+    # Add all vectors to the index
+    title_to_index = {}
+    for idx, (title, vector) in enumerate(tv_show_embeddings.items()):
+        annoy_index.add_item(idx, vector)
+        title_to_index[idx] = title
+
+    # Build the index
+    annoy_index.build(num_trees)
+    annoy_index.save(index_file)
+
+    # Save the mapping from index to title
+    with open(f"{index_file}_titles.pkl", "wb") as f:
+        pickle.dump(title_to_index, f)
+
+    return annoy_index
+
+
+# def recommend_shows(input_shows, average_vector, tv_show_embeddings, top_n=5):
+#     """
+#     Recommends TV shows based on similarity to the average vector.
+
+#     Parameters:
+#         input_shows (list): List of shows input by the user.
+#         average_vector (np.array): The average vector of the user's input shows.
+#         tv_show_embeddings (dict): Dictionary of TV show embeddings.
+#         top_n (int): Number of top recommendations to return.
+
+#     Returns:
+#         list: A list of tuples (show_title, similarity, percentage).
+#     """
+#     similarities = []
+
+#     for show, vector in tv_show_embeddings.items():
+#         # Exclude the input shows
+#         if show in input_shows:
+#             continue
+
+#         # Calculate cosine similarity
+#         similarity = cosine_similarity(average_vector, np.array(vector))
+#         similarities.append((show, similarity))
+
+#     # Sort by similarity in descending order
+#     similarities.sort(key=lambda x: x[1], reverse=True)
+
+#     # Select top N recommendations
+#     top_recommendations = similarities[:top_n]
+
+#     # Normalize similarity scores to percentages
+#     max_similarity = top_recommendations[0][1]
+#     min_similarity = top_recommendations[-1][1]
+
+#     recommendations_with_percentages = []
+#     for show, similarity in top_recommendations:
+#         # Scale similarity to a percentage (normalized)
+#         percentage = 100 * (similarity - min_similarity) / (max_similarity - min_similarity)
+#         recommendations_with_percentages.append((show, similarity, round(percentage, 2)))
+
+#     return recommendations_with_percentages
+
+def recommend_shows_with_annoy(input_vector, index_file, top_n=5):
+    """
+    Recommend TV shows using the Annoy index.
+
+    Parameters:
+        input_vector (list): The query vector.
+        index_file (str): Path to the Annoy index.
         top_n (int): Number of top recommendations to return.
 
     Returns:
-        list: A list of tuples (show_title, similarity, percentage).
+        list: A list of recommended show titles and their similarity scores.
     """
-    similarities = []
+    # Load the Annoy index and the title mapping
+    dim = len(input_vector)
+    annoy_index = AnnoyIndex(dim, 'angular')
+    annoy_index.load(index_file)
 
-    for show, vector in tv_show_embeddings.items():
-        # Exclude the input shows
-        if show in input_shows:
-            continue
+    with open(f"{index_file}_titles.pkl", "rb") as f:
+        title_to_index = pickle.load(f)
 
-        # Calculate cosine similarity
-        similarity = cosine_similarity(average_vector, np.array(vector))
-        similarities.append((show, similarity))
+    # Find the top N nearest neighbors
+    indices = annoy_index.get_nns_by_vector(input_vector, top_n, include_distances=True)
+    results = [(title_to_index[idx], 1 - dist) for idx, dist in zip(*indices)]
 
-    # Sort by similarity in descending order
-    similarities.sort(key=lambda x: x[1], reverse=True)
-
-    # Select top N recommendations
-    top_recommendations = similarities[:top_n]
-
-    # Normalize similarity scores to percentages
-    max_similarity = top_recommendations[0][1]
-    min_similarity = top_recommendations[-1][1]
-
-    recommendations_with_percentages = []
-    for show, similarity in top_recommendations:
-        # Scale similarity to a percentage (normalized)
-        percentage = 100 * (similarity - min_similarity) / (max_similarity - min_similarity)
-        recommendations_with_percentages.append((show, similarity, round(percentage, 2)))
-
-    return recommendations_with_percentages
+    return results
 
 
 def generate_show_name_and_description(prompt):
@@ -232,7 +295,6 @@ def generate_show_image(prompt, output_path):
                 response_data = response.json()
                 if response_data and 'body' in response_data and 'orderId' in response_data['body']:
                     order_id = response_data.get('body', {}).get('orderId')
-                    print(f"Order ID: {order_id}")
                 else:
                     print("Error: 'body' or 'orderId' not found in the response.")
                     print(f"Response Content: {response_data}")
@@ -259,7 +321,6 @@ def generate_show_image(prompt, output_path):
 
                         if status == "active":
                             image_url = status_data.get('output')  # The image URL
-                            print(f"Image URL: {image_url}")
                             break
                         elif status == "failed":
                             print("Image generation failed.")
@@ -281,7 +342,6 @@ def generate_show_image(prompt, output_path):
                 if image_response.status_code == 200:
                     with open(output_path, "wb") as file:
                         file.write(image_response.content)
-                    print(f"Image saved to: {output_path}")
                     return output_path
                 else:
                     print(f"Failed to download the image. Status code: {image_response.status_code}")
@@ -315,6 +375,8 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))  # Directory of the current script
     csv_file_path = os.path.join(script_dir, "imdb_tvshows.csv")
     embeddings_file_path = os.path.join(script_dir, "tv_show_embeddings.pkl")
+    index_file = os.path.join(script_dir, "tv_show_annoy_index.ann")
+
 
     # Step 1: Load TV shows and embeddings
     try:
@@ -330,7 +392,8 @@ if __name__ == "__main__":
     except FileNotFoundError:
         print(f"Error: The embeddings file '{embeddings_file_path}' was not found. Please generate embeddings first.")
         exit(1)
-
+    
+    build_annoy_index(tv_show_embeddings, index_file)
 
     # List of TV show titles
     tv_show_list = list(tv_show_data.keys())
@@ -374,12 +437,11 @@ if __name__ == "__main__":
     average_vector = calculate_average_vector(input_vectors)
 
     # Step 6: Get recommendations
-    recommendations = recommend_shows(matched_shows, average_vector, tv_show_embeddings)
-
-    # Step 7: Output recommendations
+    recommendations = recommend_shows_with_annoy(average_vector, index_file)
     print("\nHere are the TV shows that I think you would love:")
-    for show, similarity, percentage in recommendations:
-        print(f"{show} ({percentage}%)")
+    for show, similarity in recommendations:
+        print(f"{show} ({similarity * 100:.2f}%)")
+
 
     # Step 7: Generate custom shows sequentially
     # First custom show based on user input
@@ -395,8 +457,6 @@ if __name__ == "__main__":
         f"{', '.join(matched_shows)}"
     )
     show1_name, show1_description = generate_show_name_and_description(input_prompt)
-    print(f"\nShow #1: {show1_name}")
-    print(f"Description: {show1_description}")
 
     show1_visual_prompt = f"An image depicting the TV show '{show1_name}' and its story: {show1_description}"
     show1_image_path = f"generated_ads/{show1_name.replace(' ', '_').replace('*', '')}.png"
@@ -416,16 +476,18 @@ if __name__ == "__main__":
     )
     
     show2_name, show2_description = generate_show_name_and_description(recommended_prompt)
-    print(f"\nShow #2: {show2_name}")
-    print(f"Description: {show2_description}")
 
     show2_visual_prompt = f"An image depicting the TV show '{show2_name}' and its story: {show2_description}"
     show2_image_path = f"generated_ads/{show2_name.replace(' ', '_').replace('*', '')}.png"
     generate_show_image(show2_visual_prompt, show2_image_path)
 
+    print(f"I have also created just for you two shows which I think you would love. "
+          f"Show #1 is based on the fact that you loved the input shows that you gave me. "
+          f"Its name is {show1_name} and it is about {show1_description}. "
+          f"Show #2 is based on the shows that I recommended for you. "
+          f"Its name is {show2_name} and it is about {show2_description}. "
+          "Here are also the 2 tv show ads. Hope you like them!")
+
     # Step 8: Display generated images
-    print("\nHere are your two custom TV shows with their posters:")
-    print(f"Show #1: {show1_name} | Poster saved at: {show1_image_path}")
-    print(f"Show #2: {show2_name} | Poster saved at: {show2_image_path}")
     display_images([show1_image_path, show2_image_path])
 
