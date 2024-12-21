@@ -105,7 +105,6 @@ def calculate_average_vector(show_vectors):
         raise ValueError("No vectors provided for averaging.")
     return np.mean(show_vectors, axis=0)
 
-import numpy as np
 
 def cosine_similarity(a, b):
     """
@@ -226,13 +225,11 @@ def generate_show_image(prompt, output_path):
     }
 
     try:
-        print(f"Sending request to LightX API with prompt: {prompt}")
         response = requests.post(LIGHTX_API_URL, headers=headers, json=data)
 
         if response.status_code == 200:
             try:
                 response_data = response.json()
-                print("Debug: Response JSON:", response_data)  # Debugging line to inspect the JSON
                 if response_data and 'body' in response_data and 'orderId' in response_data['body']:
                     order_id = response_data.get('body', {}).get('orderId')
                     print(f"Order ID: {order_id}")
